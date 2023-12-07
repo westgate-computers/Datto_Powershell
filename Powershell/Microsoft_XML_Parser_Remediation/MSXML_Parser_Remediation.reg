@@ -1,0 +1,13 @@
+Windows Registry Editor Version 5.00
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Internet Explorer\ActiveX Compatibility\{f5078f39-c551-11d3-89b9-0000f81fe221}]
+"Compatibility Flags"=dword:04000400
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Microsoft\Internet Explorer\ActiveX Compatibility\{f5078f39-c551-11d3-89b9-0000f81fe221}]
+"Compatibility Flags"=dword:04000400
+
+Windows Registry Editor Version 5.00
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Internet Explorer\ActiveX Compatibility\{f6d90f16-9c73-11d3-b32e-00c04f990bb4}]
+"Compatibility Flags"=dword:04000400
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Microsoft\Internet Explorer\ActiveX Compatibility\{f6d90f16-9c73-11d3-b32e-00c04f990bb4}]
+"Compatibility Flags"=dword:04000400
