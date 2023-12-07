@@ -1,0 +1,8 @@
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Internet Explorer\ActiveX Compatibility\{1E57C6C4-B069-11D3-8D43-00104B138C8C}]
+"Compatibility Flags"=dword:00000400
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Internet Explorer\ActiveX Compatibility\{45E66957-2932-432A-A156-31503DF0A681}]
+"Compatibility Flags"=dword:00000400
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Internet Explorer\ActiveX Compatibility\{B7ECFD41-BE62-11D2-B9A8-00104B138C8C}]
+"Compatibility Flags"=dword:00000400
