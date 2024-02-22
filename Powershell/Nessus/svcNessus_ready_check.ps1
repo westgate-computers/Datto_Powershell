@@ -63,7 +63,7 @@ Run the script on a remote system. This assumes Remote PowerShell Management is 
 For more information, please see: https://github.com/tecnobabble/nessus_win_cred_test
 #>
 
-param([Parameter(ParameterSetName = 'Default', Mandatory = $true)][array]$ScanningAccounts)
+$ScanningAccounts = "$env:ScanningAccount" || "svcNessus"; 
 
 $ErrorActionPreference = 'stop'
 
