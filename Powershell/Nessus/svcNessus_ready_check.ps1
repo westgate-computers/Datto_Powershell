@@ -63,7 +63,14 @@ Run the script on a remote system. This assumes Remote PowerShell Management is 
 For more information, please see: https://github.com/tecnobabble/nessus_win_cred_test
 #>
 
-$ScanningAccounts = "$env:ScanningAccount" || "svcNessus"; 
+$ScanningAccounts = "$env:ScanningAccount"; 
+
+if ([String]::IsNullOrWhiteSpace($ScanningAccounts)) {
+    Write-Host "You must pass the usernames of the account(s) authorized to run the Nessus check in order to run the assessment. If a user/group is nested, pass the top level group expected to be on the target system."
+    Write-Host "Example: .\credential_check.ps1 -ScanningAccounts 'vuln_scan','DOMAIN\vuln_scan','DOMAIN\Vuln Scanning Group'"
+    Write-Host "Setting default of 'svcNessus for ScanningAccounts"
+    $ScanningAccounts = "svcNessus"
+}
 
 $ErrorActionPreference = 'stop'
 
