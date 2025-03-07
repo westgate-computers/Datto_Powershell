@@ -26,13 +26,18 @@
     https://github.com/westgate-computers/Datto_Powershell
 
 .NOTES
-    Modified for Westgate Computers by Walker Chesley. 
-    Original script by Bert-Jan Pol.
-    Modifications: 
-    - Added default if null handling for $sw parameter, now checks for $env:SearchWindow and sets to 2 if null.
-    The $env:SearchWindow variable can be set in the Datto RMM script editor to set the search window for the script.
-    - Forced output location to C:\Temp
-    - Increased script version to 2.2.1
+    Version: 2.2.1
+    Author: Bert-JanP, wchesley
+    Created: 2025-03-07
+    Modified: 2025-03-07
+    Change Log: 
+        - Modified for Westgate Computers by Walker Chesley. 
+        Original script by Bert-Jan Pol.
+        - Modifications: 
+            - Added default if null handling for $sw parameter, now checks for $env:SearchWindow and sets to 2 if null.
+            The $env:SearchWindow variable can be set in the Datto RMM script editor to set the search window for the script.
+            - Forced output location to C:\Temp
+            - Increased script version to 2.2.1
 
 #>
 
