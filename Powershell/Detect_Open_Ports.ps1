@@ -1,30 +1,173 @@
-<#
-Script to reset user folder permissions.
-Uses: icacls.exe and takeown.exe
-Tested on Server 2008 R2 X64
+#Requires -Version 5.1
 
-For all folders in base folder:
-1. Recursively resets owner to Administrators
-2. Reset folder to inherit permissions and apply to subfolders/files, clearing any existing perms
-3. Add user (based on folder name) with full control and apply to subfolders/files
-4. Recursivley reset owener to user (based on folder name)
+<#
+.SYNOPSIS
+    Alert on specified ports that are Listening or Established and optionally save the results to a custom field.
+.DESCRIPTION
+    Will alert on open ports, regardless if a firewall is blocking them or not.
+    Checks for open ports that are in a 'Listen' or 'Established' state.
+    UDP is a stateless protocol and will not have a state.
+    Outputs the open ports, process ID, state, protocol, local address, and process name.
+    When a Custom Field is provided this will save the results to that custom field.
+
+.EXAMPLE
+    (No Parameters)
+    ## EXAMPLE OUTPUT WITHOUT PARAMS ##
+    [Alert] Found open port: 80, PID: 99, State: Listen, Local Address: 0.0.0.0, Process: nginx
+    [Alert] Found open port: 500, PID: 99, State: Listen, Local Address: 0.0.0.0, Process: nginx
+
+PARAMETER: -Port "100,200,300-350, 400"
+    A comma separated list of ports to check. Can include ranges (e.g. 100,200,300-350, 400)
+.EXAMPLE
+    -Port "80,200,300-350, 400"
+    ## EXAMPLE OUTPUT WITH Port ##
+    [Alert] Found open port: 80, PID: 99, State: Listen, Local Address: 0.0.0.0, Process: nginx
+
+PARAMETER: -CustomField "ReplaceMeWithAnyMultilineCustomField"
+    Name of the custom field to save the results to.
+.EXAMPLE
+    -Port "80,200,300-350, 400" -CustomField "ReplaceMeWithAnyMultilineCustomField"
+    ## EXAMPLE OUTPUT WITH CustomField ##
+    [Alert] Found open port: 80, PID: 99, State: Listen, Local Address: 0.0.0.0, Process: nginx
+    [Info] Saving results to custom field: ReplaceMeWithAnyMultilineCustomField
+    [Info] Results saved to custom field: ReplaceMeWithAnyMultilineCustomField
+.OUTPUTS
+    None
+.NOTES
+    Supported Operating Systems: Windows 10/Windows Server 2016 or later with PowerShell 5.1
+    Release Notes: Initial Release
+By using this script, you indicate your acceptance of the following legal terms as well as our Terms of Use at https://ninjastage2.wpengine.com/terms-of-use.
+    Ownership Rights: NinjaOne owns and will continue to own all right, title, and interest in and to the script (including the copyright). NinjaOne is giving you a limited license to use the script in accordance with these legal terms. 
+    Use Limitation: You may only use the script for your legitimate personal or internal business purposes, and you may not share the script with another party. 
+    Republication Prohibition: Under no circumstances are you permitted to re-publish the script in any script library or website belonging to or under the control of any other software provider. 
+    Warranty Disclaimer: The script is provided “as is” and “as available”, without warranty of any kind. NinjaOne makes no promise or guarantee that the script will be free from defects or that it will meet your specific needs or expectations. 
+    Assumption of Risk: Your use of the script is at your own risk. You acknowledge that there are certain inherent risks in using the script, and you understand and assume each of those risks. 
+    Waiver and Release: You will not hold NinjaOne responsible for any adverse or unintended consequences resulting from your use of the script, and you waive any legal or equitable rights or remedies you may have against NinjaOne relating to your use of the script. 
+    EULA: If you are a NinjaOne customer, your use of the script is subject to the End User License Agreement applicable to you (EULA).
+#>
 #>
 
-$mainDir = "D:\Users\"
-write-output $mainDir
-$dirs = gci "$mainDir" |? {$_.psiscontainer}
-foreach ($dir in $dirs){
-write-output $dir.fullname
-takeown.exe /F $($dir.fullname) /R /D Y |out-null
-icacls.exe $($dir.fullname) /reset /T /C /L /Q
-icacls.exe $($dir.fullname) /grant ($($dir.basename) + ':(OI)(CI)F') /C /L /Q
-icacls.exe $($dir.fullname) /setowner $($dir.basename) /T /C /L /Q
+[CmdletBinding()]
+param (
+    [Parameter()]
+    [String]$PortsToCheck,
+    [String]$CustomFieldName
+)
+
+begin {
+    function Test-IsElevated {
+        $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $p = New-Object System.Security.Principal.WindowsPrincipal($id)
+        $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
 }
+process {
+    if (-not (Test-IsElevated)) {
+        Write-Error -Message "Access Denied. Please run with Administrator privileges."
+        exit 1
+    }
+    if ($env:portsToCheck -and $env:portsToCheck -ne 'null') {
+        $PortsToCheck = $env:portsToCheck
+    }
+    if ($env:customFieldName -and $env:customFieldName -ne 'null') {
+        $CustomFieldName = $env:customFieldName
+    }
+
+    # Remove any whitespace
+    $PortsToCheck = $PortsToCheck -replace '\s', ''
+
+    # Parse the ports to check
+    $Ports = if ($PortsToCheck) {
+        # Split the ports by comma and handle ranges
+        $PortsToCheck -split ',' | ForEach-Object {
+            # Trim the whitespace
+            $Ports = "$_".Trim()
+            # If the port is a range, expand it
+            if ($Ports -match '-') {
+                # Split the range and expand it
+                $Range = $Ports -split '-' | ForEach-Object { "$_".Trim() } | Where-Object { $_ }
+                if ($Range.Count -ne 2) {
+                    Write-Host "[Error] Invalid range formatting, must be two number with a dash in between them (eg 1-10): $PortsToCheck"
+                    exit 1
+                }
+                try {
+                    $Range[0]..$Range[1]
+                }
+                catch {
+                    Write-Host "[Error] Failed to parse range, must be two number with a dash in between them (eg 1-10): $PortsToCheck"
+                    exit 1
+                }
+            }
+            else {
+                $Ports
+            }
+        }
+    }
+    else { $null }
+
+    if ($($Ports | Where-Object { [int]$_ -gt 65535 })) {
+        Write-Host "[Error] Can not search for ports above 65535. Must be with in the range of 1 to 65535."
+        exit 1
+    }
+
+    # Get the open ports
+    $FoundPorts = $(
+        Get-NetTCPConnection | Select-Object @(
+            'LocalAddress'
+            'LocalPort'
+            'State'
+            @{Name = "Protocol"; Expression = { "TCP" } }
+            'OwningProcess'
+            @{Name = "Process"; Expression = { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } }
+        )
+        Get-NetUDPEndpoint | Select-Object @(
+            'LocalAddress'
+            'LocalPort'
+            @{Name = "State"; Expression = { "None" } }
+            @{Name = "Protocol"; Expression = { "UDP" } }
+            'OwningProcess'
+            @{Name = "Process"; Expression = { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } }
+        )
+    ) | Where-Object {
+        $(
+            <# When Ports are specified select just those ports. #>
+            if ($Ports) { $_.LocalPort -in $Ports }else { $true }
+        ) -and
+        (
+            <# Filter out anything that isn't listening or established. #>
+            $(
+                $_.Protocol -eq "TCP" -and
+                $(
+                    $_.State -eq "Listen" -or
+                    $_.State -eq "Established"
+                )
+            ) -or
+            <# UDP is stateless, return all UDP connections. #>
+            $_.Protocol -eq "UDP"
+        )
+    } | Sort-Object LocalPort | Select-Object * -Unique
+
+    if (-not $FoundPorts -or $FoundPorts.Count -eq 0) {
+        Write-Host "[Info] No ports were found listening or established with the specified: $PortsToCheck"
+    }
+
+    # Output the found ports
+    $FoundPorts | ForEach-Object {
+        Write-Host "[Alert] Found open port: $($_.LocalPort), PID: $($_.OwningProcess), Protocol: $($_.Protocol), State: $($_.State), Local IP: $($_.LocalAddress), Process: $($_.Process)"
+    }
+    
+}
+end {
+    
+    
+    
+}
+
 # SIG # Begin signature block
 # MIIf9QYJKoZIhvcNAQcCoIIf5jCCH+ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAxfxMT2k1qvP2e
-# iAvotQ8uv/GeYacZd05mgMjTfTk6DKCCBfowggX2MIIE3qADAgECAhMgAAAAJTk+
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAaBWh7ogBdnEDm
+# MH2EOMPJSXLUAJwjSqH3UcA/cIUHNqCCBfowggX2MIIE3qADAgECAhMgAAAAJTk+
 # wdvAji8zAAEAAAAlMA0GCSqGSIb3DQEBCwUAMFQxFTATBgoJkiaJk/IsZAEZFgVs
 # b2NhbDEcMBoGCgmSJomT8ixkARkWDHdlc3RnYXRlY29tcDEdMBsGA1UEAxMUd2Vz
 # dGdhdGVjb21wLURDMDEtQ0EwHhcNMjUwMTIxMjIzNTI4WhcNMjcwMTIxMjI0NTI4
@@ -61,17 +204,17 @@ icacls.exe $($dir.fullname) /setowner $($dir.basename) /T /C /L /Q
 # AxMUd2VzdGdhdGVjb21wLURDMDEtQ0ECEyAAAAAlOT7B28COLzMAAQAAACUwDQYJ
 # YIZIAWUDBAIBBQCgfDAQBgorBgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYK
 # KwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG
-# 9w0BCQQxIgQgUBCWa6TYdl3n0Dd3SwoqYiPUdHoslhDPwhcmd7iy0lUwDQYJKoZI
-# hvcNAQEBBQAEggEA0ewh1eP6GFgbGw6i+ps6psiLIkFrZZDaamPzajmh0e0Gs7VE
-# mh0m47XaVpbLK/20EObzc4o2b34NAukPG91KCK+z5uVIyNI1RN8fVLWbmuB+PV5Y
-# RLo299eGfh4LUmFB0YdW7Garhw8ohA5Zee5FASkS/j/JZ8bPW7k6RWm0uYlUKb3H
-# c3FtNjLho8ZIf/Jc8leqc7wVwsEYyOM4wJ3ZDxlmrUsrhJe3cuGAD7NJcKy2ftOe
-# dcbS5Z6XWO9UK+vVqD0L+2wxp9IHS4e2U7BBovy8Ryaa368VGIcBcPcdmC1nJzeV
-# Z9zHcp5qnphKqg9O2Pu5D+FND9g+lkaH4TKQmKGCFzkwghc1BgorBgEEAYI3AwMB
+# 9w0BCQQxIgQgHqyUSdUD3xmDMDfBm5NqDBzvFlGTRZt0glWC7hAA3+wwDQYJKoZI
+# hvcNAQEBBQAEggEAt6iBHN4IUXTLIVO2RSyYI7+Pcml0XgHoPOKCT/hVk4dSoJZN
+# SOkcnTnuyfW1VxQvCJtrGiEO/0OUWWFZjtpac4fYDVJR99oNNeFlequWkBS3BXz6
+# Hd/Xu9Evgjw/sNQmum+DycUyPTvvR0gE/OUmwOwfGHbilgVnv6dKpBO4da15FGLy
+# y/7wXhDR9uX5++tCAbiSK/knTfjxM24IzhGMD6uePMWBqnPQ8B61qRIFl+II4cTV
+# pqxRUUwbyVMJrFHqz9ZNG1cbzGafVZ0wg1Ifx7fBS3qJk2cH9GmvZJj0CawqVb2z
+# Jn8FLCA+fMRZ3hmoq+R/ieOYyfrE7COjDAMMQaGCFzkwghc1BgorBgEEAYI3AwMB
 # MYIXJTCCFyEGCSqGSIb3DQEHAqCCFxIwghcOAgEDMQ8wDQYJYIZIAWUDBAIBBQAw
 # dwYLKoZIhvcNAQkQAQSgaARmMGQCAQEGCWCGSAGG/WwHATAxMA0GCWCGSAFlAwQC
-# AQUABCA6zdMeLcz+BGry1hqglR2OYIG0ad5oQUz+FxcQ+YxkwwIQIKzHSqQAZTTQ
-# zEQ3hkzrJxgPMjAyNTAzMDcxNzEzNDVaoIITAzCCBrwwggSkoAMCAQICEAuuZrxa
+# AQUABCAI6CCE8BXr/q2YCyn00mWCg/0eFThrW6EWzJf6RZR2GgIQTgdT1YBXN4MX
+# MFkFO5ITmRgPMjAyNTAzMDcxNzEzNDVaoIITAzCCBrwwggSkoAMCAQICEAuuZrxa
 # un+Vh8b56QTjMwQwDQYJKoZIhvcNAQELBQAwYzELMAkGA1UEBhMCVVMxFzAVBgNV
 # BAoTDkRpZ2lDZXJ0LCBJbmMuMTswOQYDVQQDEzJEaWdpQ2VydCBUcnVzdGVkIEc0
 # IFJTQTQwOTYgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTAeFw0yNDA5MjYwMDAwMDBa
@@ -178,18 +321,18 @@ icacls.exe $($dir.fullname) /setowner $($dir.basename) /T /C /L /Q
 # NiBUaW1lU3RhbXBpbmcgQ0ECEAuuZrxaun+Vh8b56QTjMwQwDQYJYIZIAWUDBAIB
 # BQCggdEwGgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEP
 # Fw0yNTAzMDcxNzEzNDVaMCsGCyqGSIb3DQEJEAIMMRwwGjAYMBYEFNvThe5i29I+
-# e+T2cUhQhyTVhltFMC8GCSqGSIb3DQEJBDEiBCB0e5s/p1oUKwInQhJrnubH+ESJ
-# q2Mu3jynNAd1Pq17kDA3BgsqhkiG9w0BCRACLzEoMCYwJDAiBCB2dp+o8mMvH0ML
-# OiMwrtZWdf7Xc9sF1mW5BZOYQ4+a2zANBgkqhkiG9w0BAQEFAASCAgC3VHX4eIa7
-# wDCNoLDLm1k32SpIWzfzT8V12aoKPZWlHUciMeYLfGH3bEXv8xDjIl8hpIGODH8n
-# d1glVSexSDYHhcuqMjL1XTcr1TRpBqkT/nF7cCxbzcEEZvvScgCb3X5HpsKCrMBL
-# ZuYxAHkCGKSrDlvVn4ksxt2PZGN5ikv03j3T9jUDMlwChHs4zsOuzMaJgCQEczjS
-# GlxMFiZTr5FkRQwloA2VY+oBpdXecg4tdcJOsmXMHCArz3jj2whkAQ6epF0ibIrL
-# ZBgqdPQMgsbJSM+oZ1IjIZAbCwWnwYZb+GdCMBRXn3SuT8bXLpjt7OmbQLTw69iw
-# D2PAaxQj4bnNQh6zpDsThCvOuPuW70q9sEDDghajRDeCGdCs1e8qrHXUPfcIb5+w
-# rGW1m510OL/FswkMmdi1dhIEOJlgV8+F9TQHL5rApccBfSiOMqhawXtH32NyRfdD
-# m6py15ChP4cKDwOMqySkcBH1YBBaC9Vt/Wzf+rQdmXpXf4I+UIVozhXDcfB7NCnL
-# ewIU8iIenC/G7ik9DW/MPAEBm9ftZrJnfhdvQ1kL20ujXqTKrVsFjR+nCt8FOoUx
-# 3Gb+LNYd5bsPMSXPFJmpjskLFnroWd/CQ5KlFF/8IrxMvu61ogSfYTgQGHThOFR7
-# O0HXWJ8nWS6RUIb8vN9SeG4gA2UwZl3mhg==
+# e+T2cUhQhyTVhltFMC8GCSqGSIb3DQEJBDEiBCB7Q0DLM1DpLfNwiE3KmDSpGnzp
+# u+mEQfXnrAoprK/mYjA3BgsqhkiG9w0BCRACLzEoMCYwJDAiBCB2dp+o8mMvH0ML
+# OiMwrtZWdf7Xc9sF1mW5BZOYQ4+a2zANBgkqhkiG9w0BAQEFAASCAgBtEo9e8dFC
+# OYEXRjucpnoBHM9guULJb7O7v/rxExjEVxhm8sJz/ZuKARqWZGlNrZFXRZquoOPk
+# tjHIYBh5jADlD3+6nxi8x+vP7igZcCe3Ar8/w8LXRWzYorkqLwObqY+stqkm5I4m
+# r3NSCCEiESZim0go+R58rtaNKtiFUdiT4JM+KGI63xNJ8ecwy6iMl0n/K/FGJ+UK
+# 03VRiS3IkvOIjC+4Q289r/fw5w4PXHrtciAJvNC1iYrEtO6yCIPhd4gOp45/fhMp
+# 3Mu94iNgXBppnSSBYriHnX2IMPeWFIVyS4dFKYtBIZIpsVmsDH+pKbIa/ZnI1gJK
+# dWqf4LL9/jd6LzMuVc9FAuNesiRoNhNIFTRIVTpiO+YDaP97e7ONq0o4SJ5JcOIL
+# P9UfR+9K2KZBWZWBrcIMhJ4UjP+c7785wmEt1t4lGm3NWjMrSoJthwNazV4CJrbu
+# a9nRjr08r79486yvz/AgUb6JVOU0/+fbvXc8Qv0vBR0bTXaTneVFeCNjEWDzKNXQ
+# 33sZPQaHCBnpfCJYPD/y8gvEBbJERi8eBAu3ChAwLfgGrhNpk5bfvOHl0Awuv1M5
+# oUjZrUnLb39O1cIbYPxyNvIpLxpNXTfAN2bX1K9s/XcXhZXCvacSpUjKXvxRFuUn
+# D6VFVmhmqVu1itLdGifdYQgwOBtKAP1K8w==
 # SIG # End signature block

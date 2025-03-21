@@ -1,46 +1,187 @@
+#Requires -Version 5.1
 
-################### Disable_Office_ActiveX###########################
-# Description: Disable all office activeX controls via registrty 
-# key set at HKCU\Software\policies\microsoft\office\common\security 
+<#
+.SYNOPSIS
+    Returns the longest idle time of any user logged in or for a specific user.
+.DESCRIPTION
+    Returns the longest idle time of any user logged in or for a specific user.
+    If RDS(Remote Desktop Services) is installed and the RSAT tools for it as well,
+     then this will get the idle time of each logged in user.
+    For workstations and servers(with out RDS installed),
+     this will get the current idle of the currently logged in user.
+    If a user is logged in via the console and another is via the admin RDP session,
+     then both will be considered as one user for calculating idle time.
+.EXAMPLE
+    No parameters needed.
+    Returns the longest idle time of all users logged in.
+.EXAMPLE
+     -UserName "Fred"
+    Returns the longest idle time of the user Fred.
+.EXAMPLE
+    PS C:> Get-User-Idle-Time.ps1 -UserName "Fred"
+    Returns the longest idle time of the user Fred.
+.OUTPUTS
+    PSCustomObject[]
+.NOTES
+    Minimum OS Architecture Supported: Windows 10, Windows Server 2016
+    Release Notes:
+    Adds functions to get idle time from RDS and non-RDS computers.
+By using this script, you indicate your acceptance of the following legal terms as well as our Terms of Use at https://www.ninjaone.com/terms-of-use.
+    Ownership Rights: NinjaOne owns and will continue to own all right, title, and interest in and to the script (including the copyright). NinjaOne is giving you a limited license to use the script in accordance with these legal terms. 
+    Use Limitation: You may only use the script for your legitimate personal or internal business purposes, and you may not share the script with another party. 
+    Republication Prohibition: Under no circumstances are you permitted to re-publish the script in any script library or website belonging to or under the control of any other software provider. 
+    Warranty Disclaimer: The script is provided “as is” and “as available”, without warranty of any kind. NinjaOne makes no promise or guarantee that the script will be free from defects or that it will meet your specific needs or expectations. 
+    Assumption of Risk: Your use of the script is at your own risk. You acknowledge that there are certain inherent risks in using the script, and you understand and assume each of those risks. 
+    Waiver and Release: You will not hold NinjaOne responsible for any adverse or unintended consequences resulting from your use of the script, and you waive any legal or equitable rights or remedies you may have against NinjaOne relating to your use of the script. 
+    EULA: If you are a NinjaOne customer, your use of the script is subject to the End User License Agreement applicable to you (EULA).
+.COMPONENT
+    ManageUsers
+#>
 
-#####################################################################
-# Author: Walker Chesley                                            #
-# Change List: List your changes here:                              #
-# 01/26/2024 - Created Script
-#####################################################################
+[CmdletBinding()]
+param (
+    # Specify one user on a Terminal Services Server, else leave blank for normal servers and workstations
+    [Parameter(Mandatory = $false)]
+    $UserName = ($env:GivenName, "")[$null -eq $env:GivenName]
+)
 
-function Datto_Output {
-    <#
-        .SYNOPSIS
-            Wrapper function to output data into Datto
-        .EXAMPLE
-            Datto_Output("The software was installed")
-    #>
-    
-    param (
-        # The text you want to output into Datto
-        $message
-    )
-    # General Variables for Datto: 
-    $StartResult = Write-Host "<-Start Result->" 6>&1
-    $EndResult = Write-Host "<-End Result->" 6>&1
-    
-    $StartResult
-    Write-Host "$message"
-    $EndResult
+begin {
+    function Test-IsElevated {
+        $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $p = New-Object System.Security.Principal.WindowsPrincipal($id)
+        if ($p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator))
+        { Write-Output $true }
+        else
+        { Write-Output $false }
+    }
+    Function Get-QueryUser() {
+        Param()
+        $Result = @()
+        # Replaces all occurrences of 2 or more spaces in a row with a single comma
+        $Lines = @(query.exe user).foreach({ $(($_) -replace ('s{2,}', ',')) })
+        if ($Lines.Count -gt 1) {
+            $Header = $($Lines[0].split(',').trim())
+            for ($i = 1; $i -lt $($Lines.Count); $i++) {
+                $Res = "" | Select-Object $Header
+                $Line = $($Lines[$i].split(',')).foreach({ $_.trim().trim('>') })
+                # Accounts for disconnected users
+                if ($Line.count -eq 5) {
+                    $Line = @($Line[0], "$($null)", $Line[1], $Line[2], $Line[3], $Line[4] )
+                }
+                for ($j = 0; $j -lt $($Line.count); $j++) {
+                    $Res.$($Header[$j]) = $Line[$j]
+                }
+                $Result += $Res
+                Remove-Variable Res
+            }
+            return $Result
+        }
+        else {
+            return $null
+        }
+    }
+
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.ComponentModel;
+
+namespace GetLastUserInput
+{
+    public class GetLastUserInput
+    {
+        private struct LASTINPUTINFO
+        {
+            public uint cbSize;
+            public uint dwTime;
+        }
+        private static LASTINPUTINFO lastInPutNfo;
+        static GetLastUserInput()
+        {
+            lastInPutNfo = new LASTINPUTINFO();
+            lastInPutNfo.cbSize = (uint)Marshal.SizeOf(lastInPutNfo);
+        }
+        [DllImport("User32.dll")]
+        private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+        /// <summary>
+        /// Idle time in ticks
+        /// </summary>
+        /// <returns></returns>
+        public static uint GetIdleTickCount()
+        {
+            return ((uint)Environment.TickCount - GetLastInputTime());
+        }
+        /// <summary>
+        /// Last input time in ticks
+        /// </summary>
+        /// <returns></returns>
+        public static uint GetLastInputTime()
+        {
+            if (!GetLastInputInfo(ref lastInPutNfo))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            return lastInPutNfo.dwTime;
+        }
+    }
+}
+"@
 }
 
-# Env Variable changes: 
-$ErrorView = 'NormalView'
-$ErrorActionPreference = 'Stop'
+process {
+    if (-not (Test-IsElevated)) {
+        Write-Error -Message "Access Denied. Please run with Administrator privileges."
+        exit 1
+    }
+    if ($(Get-Module -Name "RemoteDesktop") -and $(Get-RDServer -ErrorAction SilentlyContinue)) {
+        try {
+            $Sessions = Get-RDUserSession
+            $Sessions | Select-Object UserName, IdleTime
+        }
+        catch {
+            Write-Warning -Message "A Remote Desktop Services deployment does not exist on $env:COMPUTERNAME."
+        }
+    }
+    else {
+        Write-Warning -Message "Remote Desktop Services is not installed on this computer, Falling back to query user."
+        $Results = Get-QueryUser
+        if ($null -eq $Results) {
+            Write-Host "No user(s) logged in."
+            exit 0
+        }
+        # Parse query results and loop through each user
+        $Results | ForEach-Object {
+            $CurrentUser = $_.USERNAME
+            # If UserName param is used, only filter that user; If UserName param isn't used, return all users
+            if ($CurrentUser -like $UserName -or ([string]::IsNullOrEmpty($UserName) -or [string]::IsNullOrWhiteSpace($UserName))) {
+                # Output a PowerShell Custom Object array
+                [PSCustomObject]@{
+                    UserName    = $CurrentUser
+                    SessionName = $_.SESSIONNAME
+                    Id          = $_.ID
+                    State       = $_.STATE
+                    LogonTime   = $_.'LOGON TIME'
+                    IdleTime    = if ($_.'IDLE TIME' -like 'none') { 0 }else { $_.'IDLE TIME' }
+                }
+            }
+        } | Sort-Object -Property IdleTime | Select-Object -Property UserName, @{
+            # Modify IdleTime when it shows none
+            Label      = "IdleTime"
+            Expression = {
+                New-TimeSpan -Start $(Get-Date) -End $(Get-Date).AddMilliseconds([GetLastUserInput.GetLastUserInput]::GetIdleTickCount())
+            }
+        }
+    }
+}
 
-reg add "HKCU\SOFTWARE\Microsoft\Office\common\security" /v "disableallactivex" /t REG_DWORD /d 1 /f
+end {}
 
 # SIG # Begin signature block
 # MIIf9gYJKoZIhvcNAQcCoIIf5zCCH+MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCwUM0hn/CmX13C
-# SNSbIWeDkmeF/TI1qRa7CnbzLb2eVKCCBfowggX2MIIE3qADAgECAhMgAAAAJTk+
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAYG5KnsEhaJVoI
+# jSPzp6QfJ9Oj29MbllOD4Hgt71jX36CCBfowggX2MIIE3qADAgECAhMgAAAAJTk+
 # wdvAji8zAAEAAAAlMA0GCSqGSIb3DQEBCwUAMFQxFTATBgoJkiaJk/IsZAEZFgVs
 # b2NhbDEcMBoGCgmSJomT8ixkARkWDHdlc3RnYXRlY29tcDEdMBsGA1UEAxMUd2Vz
 # dGdhdGVjb21wLURDMDEtQ0EwHhcNMjUwMTIxMjIzNTI4WhcNMjcwMTIxMjI0NTI4
@@ -77,17 +218,17 @@ reg add "HKCU\SOFTWARE\Microsoft\Office\common\security" /v "disableallactivex" 
 # AxMUd2VzdGdhdGVjb21wLURDMDEtQ0ECEyAAAAAlOT7B28COLzMAAQAAACUwDQYJ
 # YIZIAWUDBAIBBQCgfDAQBgorBgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYK
 # KwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG
-# 9w0BCQQxIgQgxkL3E9zEMcqke1oj4QkA1GsSp4U9MuTrvBJt6O4jjhgwDQYJKoZI
-# hvcNAQEBBQAEggEAuCKyvziyTikL1a+U4ZpqWilEzMg6JzhdqdcDVLdydfDx9MeC
-# I6Z/kLHBstFAam1DUhdXNft+EeDn7QQxIbuN6ZAElMztI31b55tgC36zi81nnnv3
-# w50+QMqXw7Hb6l3T/IYiVmw8TkwqHR0wUlxZjf2hQBK7bDNDuKIrp0OxYRd8SId9
-# k+zeQO++Fys3qBiHRixTMVrb06yqNAaHfra76PNCimpstj59w6bqdj+cn7/kshvG
-# rFwz7BUjjstO8X8zw4AsLbhyE3RjrXMKKBGTlUwEQeXPCvzacKxHKgHGk1Id//rZ
-# 95mQWfTZdnQhBAiD8AG2A6ZTPw81eGRUWP8om6GCFzowghc2BgorBgEEAYI3AwMB
+# 9w0BCQQxIgQgO965rdRji9K/6Fam4NpYBWFLc+tptNMupiQcEgXp9tQwDQYJKoZI
+# hvcNAQEBBQAEggEAV7NEwhqAAt5zMLV/e1vzr0FyKiVuM2ncNypFXCj1tefatlZE
+# 7w5C6Hj3F3eM24NpvNvO717W5954zPtSWZ362lA1lqnxtXPO7kkI1HzURS+rfZub
+# gvpWzi7u7LBY9eoawNqbswk8aH23B4zr8M0qQtvSaQsb4wCt3mSqy20trfpeVaGM
+# dxZjtuHJq7roGGAR4nygXlL4y6sN+gBd0UjMTy9XEpMD85AnUBS051wI5r/W/3AG
+# lkAdeLwgeEgns5IH7064JLsCozv8FUckkQ6DUYtzax0B8f2y7xpANGRpCl+AZyQG
+# dB4K6QiiAlE5VpYW2VJqCpMdj7wPm4KKDrzDIKGCFzowghc2BgorBgEEAYI3AwMB
 # MYIXJjCCFyIGCSqGSIb3DQEHAqCCFxMwghcPAgEDMQ8wDQYJYIZIAWUDBAIBBQAw
 # eAYLKoZIhvcNAQkQAQSgaQRnMGUCAQEGCWCGSAGG/WwHATAxMA0GCWCGSAFlAwQC
-# AQUABCAUujHOqwqvPPSX4wIL/u0O4wmwav+n2078RJ6TpykB/gIRAI+prOVbw+et
-# OiWm/RIdUVIYDzIwMjUwMzA3MTcxMzQ1WqCCEwMwgga8MIIEpKADAgECAhALrma8
+# AQUABCA8m0Wx/aUDdxUL5afbPhA8rWdX/AB+GWY71XsFxudUCgIRAKySCAGw/jQf
+# IEHPZZ4nANcYDzIwMjUwMzA3MTcxMzQ2WqCCEwMwgga8MIIEpKADAgECAhALrma8
 # Wrp/lYfG+ekE4zMEMA0GCSqGSIb3DQEBCwUAMGMxCzAJBgNVBAYTAlVTMRcwFQYD
 # VQQKEw5EaWdpQ2VydCwgSW5jLjE7MDkGA1UEAxMyRGlnaUNlcnQgVHJ1c3RlZCBH
 # NCBSU0E0MDk2IFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcNMjQwOTI2MDAwMDAw
@@ -193,19 +334,19 @@ reg add "HKCU\SOFTWARE\Microsoft\Office\common\security" /v "disableallactivex" 
 # IEluYy4xOzA5BgNVBAMTMkRpZ2lDZXJ0IFRydXN0ZWQgRzQgUlNBNDA5NiBTSEEy
 # NTYgVGltZVN0YW1waW5nIENBAhALrma8Wrp/lYfG+ekE4zMEMA0GCWCGSAFlAwQC
 # AQUAoIHRMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUx
-# DxcNMjUwMzA3MTcxMzQ1WjArBgsqhkiG9w0BCRACDDEcMBowGDAWBBTb04XuYtvS
-# Pnvk9nFIUIck1YZbRTAvBgkqhkiG9w0BCQQxIgQgBD03Ez4JOtQHULKo6bsnwsAy
-# TAO+SHUJQzccMpsMY84wNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgdnafqPJjLx9D
-# CzojMK7WVnX+13PbBdZluQWTmEOPmtswDQYJKoZIhvcNAQEBBQAEggIACveoBdJO
-# 0qGkBvu0E/ua44y00pTvSrH2otz9AL9aUUSdNk44uTh/jsm+OMuLzml7sAUi3QZY
-# egVRz/7BpEv0GzkDBR5hkrK/mawuA4UPA76nBEUtApXJqCeiuUM2nmk3ySGGOdXp
-# yCWymMsWw2vT6CctkylqVj7QK6934NaHHUZ1jLP+KD2c5K+GbPyIXbWRvzqgTzrJ
-# GuUoX1/hKjQ/NuHe/ktFyzaRYQBX8TzP36i+eAZEfmq46vHVy1EMLoKgkw85m4Ax
-# XAn54EaFglcSB/j9XGVnqS/ZGjY04QSpllSu33rZKdd8LFITl308d7m8G2ofyJio
-# ukl/HkV+Fd3JRbvISKikRVZ69FUc0K5cpctWcbUzibbsYtx49971ySVrmfQv1ojM
-# pdHt3YBVLPcCYtZNaWAbg8Y5ka9Oa7rXZ/D9zsCt+F4wMISeUS8wE0QUvGIPfh1p
-# xpUX7YVNLP8cNISNy4k+yjqOdZH2IZRI/dlzzIqI08r8dNcOMRO94LIqiwpYgkaf
-# 2WPcA9KWNrtjcFaJuiyLXB7P1eXX2QccmknxHku7Y2KFzfniLCCUovzScyd15Dh1
-# LdwrRORNRUO5Gnb1DplToh+V9w4sst1GNwDuMb281TkiUWYregGyI4PQtY1CbfyP
-# RazbKU7GowsQS3iPPsjVIj+bmQrIhTc8UKc=
+# DxcNMjUwMzA3MTcxMzQ2WjArBgsqhkiG9w0BCRACDDEcMBowGDAWBBTb04XuYtvS
+# Pnvk9nFIUIck1YZbRTAvBgkqhkiG9w0BCQQxIgQgPwh/God7L1aWmU9RRJhBjmVO
+# EVbS3c3p1SH74V4dXAIwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgdnafqPJjLx9D
+# CzojMK7WVnX+13PbBdZluQWTmEOPmtswDQYJKoZIhvcNAQEBBQAEggIAW8ltN/a5
+# Ctf2e2DBMnbql/jYGz6x/N006zo+MyjJ1tP6wEJG3ab/Q28XVHUZWtVEBgR/ZB13
+# /TcPWTQ67lH5tEwbIvlNZ4OR10T695NVyvmvdzHRS6lM+RBX+CS4PV6jWAtJhaK0
+# /HWFyj7tic9BPB6fz2mptMUazNI7s/645h65Gd463iVu/adxWmXFQW8P5Obg8YMy
+# Q7OXGj09Z6+1QiUY7+xzZpUZxo67zRb8URqixsNWh+eRh6v4XDtcWU22HS6jyZHF
+# hN4ikdRDzL6s2d3UIlpgYENFXQNEbxm0NENULHrjzvW6X7g993p6PtZngm7FKsVJ
+# bKB8XcmVnBsRjeo6cxJaJ3NoPnVknL845ubkM+imzlyxElQr7s5bAkzXWm+Ld3+R
+# q5OzqiEwzdwlZ6KJm6de+4iPpfDCxNQEkS4jqtoU6tbOlE+DWprkd+htIlPgKITL
+# w8UkntyJQV+dVE4CW93K8Z+SHZA3zFBoz0195xfz0dWoGv3qWa9Oas0SZrSkR6N8
+# xjl+EU0bEJzbedO0wvpRKYM3kG4WaGaM36HVnOSt1dHHjRcXQGp2PiN6P920bsVW
+# B/+h4Y1IJYJL82LK5UV874fN32RWM8UrigkpeoBQdAkputTVIEugdxvDzLj9cNk+
+# RCZZqTONCSa44L1+1KwX11E4qTDMQH+Ubak=
 # SIG # End signature block
