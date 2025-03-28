@@ -38,10 +38,15 @@ local executionSummary = ""
 -- F U N C T I O N S
 -- - - - - - - - - - - - - - - - - - - - - - - -
 
--- Function to assist with logging, appends logs to executionSummary variable
--- PARAMETERS:
--- bool: isError - control error or regular log message, true for error false for normal log
--- string: logMessage - The message to be logged.
+-----  FUNCTION  ---------------------------------------------------------------
+--         NAME:  logMessage
+--      PURPOSE:  Datto EDR Logging helper
+--  DESCRIPTION:  if message is error, log it. Else append logMessage to executionSummary
+--   PARAMETERS:  
+--          isError: <bool>: true for error, false for summary logs
+--       logMessage: <string> Message to be logged.
+--      RETURNS:  nil
+--------------------------------------------------------------------------------
 local function logMessage(isError, logMessage)
     if isError == true then
         hunt.error(logMessage)
@@ -51,7 +56,14 @@ local function logMessage(isError, logMessage)
     end
 end
 
--- Function to get all directories (user profiles) in C:\Users
+-----  FUNCTION  ---------------------------------------------------------------
+--         NAME:  getUserProfiles
+--      PURPOSE:  Get all users profile paths
+--  DESCRIPTION:  Iterate over given basePath and return all user profile paths
+--   PARAMETERS:  basePath: <string>: Path to user profiles directory
+--      RETURNS:  profiles: <table>: Users profile table, only returns name of users 
+--                in given directory
+--------------------------------------------------------------------------------
 local function getUserProfiles(basePath)
     local profiles = {}
     local command = 'dir "' .. basePath .. '" /b /ad'
@@ -65,7 +77,13 @@ local function getUserProfiles(basePath)
     return profiles
 end
 
--- Function to delete a folder recursively
+-----  FUNCTION  ---------------------------------------------------------------
+--         NAME:  deleteFolder
+--      PURPOSE:  Delete folder at given path
+--  DESCRIPTION:  Recursivly delete directory and sub directories at given path
+--   PARAMETERS:  path: <string>: Full system path to user profile directory
+--      RETURNS:  nil
+--------------------------------------------------------------------------------
 local function deleteFolder(path)
     if not hunt.fs.path_exists(path) then
         logMessage(true, "Path does not exist at" .. path)
