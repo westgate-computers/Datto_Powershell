@@ -47,8 +47,8 @@ local function logMessage(isError, logMessage)
         hunt.error(logMessage)
     else
         hunt.log(logMessage)
+        executionSummary = executionSummary .. logMessage
     end
-    executionSummary = executionSummary .. logMessage
 end
 
 -- Function to get all directories (user profiles) in C:\Users
