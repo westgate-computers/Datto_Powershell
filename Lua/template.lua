@@ -1,10 +1,25 @@
 --[[
-    script_name - brief description
+    name: Delete File
+    filetype: Datto ERD Extension, formerly Infocyte
+    type: <Response or Collection>
+    description: |  
+        Script description
+    author: Walker Chesley
+    created: 2025-03-28
+    updated: 2025-03-28
 
-    script_name - Extended Description of script
+    GLOBAL VARIABLES
+    * Variable Name: 
+        * variable description
+        * variable type
+        * default (true or false)
+        * required (true or false)
 
-    ADDITIONAL SOFTWARE NEEDED FOR THIS SCRIPT
-    * none
+    RUNTIME ARGUMENTS
+    * List runtime arguments
+        * variable description
+        * variable type
+        * required (true or false)
 
     USAGE
     * list usage of scipt
@@ -12,15 +27,14 @@
     VERSION
     * 1.0
 
-    AUTHOR
-    * Walker Chesley
-
     BUGS, COMMENTS, SUGGESTIONS
     * Send to Walker Chesley, chesley.walker@gmail.com
 
     CHANGES
-    * Last Updated: 2025-03-27
-    * Created Script
+    * Created 
+        
+    ADDITIONAL SOFTWARE NEEDED FOR THIS SCRIPT
+    * none
 ]]
 
 -- - - - - - - - - - - - - - - - - - - - - - - -
