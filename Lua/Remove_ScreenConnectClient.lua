@@ -63,6 +63,40 @@ local function logMessage(isError, logMessage)
     end
 end
 
+-----  FUNCTION  ---------------------------------------------------------------
+--         NAME:  iterateUsersAppData
+--      PURPOSE:  Iterate through user profiles and check for AppData\Local\Apps
+--  DESCRIPTION:  This function checks each user profile for the existence of the Apps directory in AppData\Local.
+--   PARAMETERS:  None
+--      RETURNS:  results: <table>: A table containing paths to the Apps directories found.
+--------------------------------------------------------------------------------
+local function iterateUsersAppData()
+    -- Get all users profiles via Datto EDR: 
+    local users = hunt.fs.ls("C:\\Users")
+    -- table to hold results: 
+    local results = {}
+    -- Iterate over each user profile
+    for _, user in ipairs(users) do
+        if user:type() == "dir" then  -- Ensure it's a directory
+            local appdata_path = user:path() .. "\\AppData\\Local\\Apps\\2.0"
+
+            -- Check if the "Apps" directory exists
+            if hunt.fs.exists(appdata_path) then
+                table.insert(results, appdata_path)  -- Store the valid path
+                hunt.env.run_powershell('rm -Recurse -Force ' .. appdata_path)  -- Remove the directory
+                hunt.log(f"Found Apps folder: {appdata_path}")
+            end
+        end
+    end
+        -- Output Results
+    if #results > 0 then
+        hunt.log(f"Found 'Apps' directories in {#results} user(s).")
+    else
+        hunt.log("No 'Apps' directories found.")
+    end
+
+    return results  -- Return results for further processing if needed
+end
 
 -- - - - - - - - - - - - - - - - - - - - - - - -
 -- M A I N
@@ -75,15 +109,15 @@ hunt.log("Starting Remove_ScreenConnectClient script execution")
 
 -- Stop ScreenConnect services
 local stopServiceResult = hunt.env.run_powershell(stopServicesCommand)
-print("Stopped ScreenConnect services")
+huht.log("Stopped ScreenConnect services")
 
 -- Remove ScreenConnect client directory using os.execute and rmdir
 local removeProgramFilesResult = hunt.env.run_powershell('rm -Recurse -Force ' .. programFilesPath)
-print("Removed ScreenConnect client in Program Files (x86)")
+huht.log("Removed ScreenConnect client in Program Files (x86)")
 
 -- Remove ScreenConnect Data Directory
 local removeDataDirectoryResult = hunt.env.run_powershell('rm -Recurse -Force ' .. programDataPath)
-print("Removed ScreenConnect Data Directory")
+huht.log("Removed ScreenConnect Data Directory")
 
 if stopServiceResult then
     logMessage(false, stopServiceResult)
@@ -98,5 +132,6 @@ end
 if not executionSummary or executionSummary == "" then
     hunt.summary("ERROR: Failed to remove ScreenConnectClient")
 else
+    iterateUsersAppData()
     hunt.summary(executionSummary)
 end
